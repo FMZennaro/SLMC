@@ -1,0 +1,128 @@
+
+// SUBJECTIVE LOGIC and MCMC - Quantitative Analysis
+// Simulating and comparing SL product and MC simulation (run at http://webppl.org/)
+
+// Global parameters.
+var W = 2
+var alpha = Vector([1., 1., 1.])
+var N_experiments = 100
+var N_mc = 50000
+var N_integrations = 1000
+
+var logit = function(x){
+  return Math.log( x / (1-x))
+}
+
+// Helper function for converting from opinions to beta pdfs and viceversa
+var Opinion2BetaEvidence = function(opinion){
+  if (opinion.u==0){ return 'error' }
+  else{
+    var r = opinion.b*W / opinion.u
+    var s = opinion.d*W / opinion.u
+    return {r:r,s:s,a:opinion.a}
+  }
+}  
+  
+var BetaEvidence2Opinion = function(belief){
+  var b = belief.r / (W+belief.r+belief.s)
+  var d = belief.s / (W+belief.r+belief.s)
+  var u = W / (W+belief.r+belief.s)
+  return {b:b,d:d,u:u,a:belief.a}
+}
+
+var BetaEvidence2Beta = function(belief){
+  var alpha = belief.r + belief.a*W
+  var beta = belief.s + (1-belief.a)*W
+  return {alpha:alpha,beta:beta}
+}
+
+// Functions to compute products
+var SL_product = function(o1,o2){
+  var b = (o1.b * o2.b) +
+    ((1-o1.a)*o2.a*o1.b*o2.u + (1-o2.a)*o1.a*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var d = o1.d + o2.d - o1.d*o2.d
+  var u = o1.u*o2.u +
+    ((1-o2.a)*o1.b*o2.u + (1-o1.a)*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var a = o1.a*o2.a
+  return {b:b,d:d,u:u,a:a}
+}
+
+var MC_product = function(b1,b2){
+  var options = {method:'rejection', samples:N_mc}
+  return Infer(options, function(){
+    var x1 = Beta({a:b1.alpha,b:b1.beta})
+    var x2 = Beta({a:b2.alpha,b:b2.beta})
+    return sample(x1)*sample(x2) 
+  })
+}
+
+var logit_MC_product = function(b1,b2){
+  var options = {method:'MCMC', samples:N_mc}
+  return Infer(options, function(){
+    var x1 = Beta({a:b1.alpha,b:b1.beta})
+    var x2 = Beta({a:b2.alpha,b:b2.beta})
+    var x1x2 = sample(x1)*sample(x2)
+    var y = logit(x1x2) 
+    return y
+  })
+}
+
+
+
+// Experimental loop
+var iter_experiments = _.range(N_experiments)
+var loop_experiments = function(i){
+
+  // Parameters for initializing the opinions
+  var vals1 = sample(Dirichlet({alpha:alpha})).data
+  var vals2 = sample(Dirichlet({alpha:alpha})).data
+  var a1 = sample(Uniform({a:0,b:1}))
+  var a2 = sample(Uniform({a:0,b:1}))
+
+  var Ox = {b:vals1[0], d:vals1[1], u:vals1[2], a:a1}
+  var Oy = {b:vals2[0], d:vals2[1], u:vals2[2], a:a2}
+
+  // Compute the product of opinions and project to Beta pdf for visualization
+  var Oz = SL_product(Ox,Oy)
+  var BEz = Opinion2BetaEvidence(Oz)
+  var Bz = BetaEvidence2Beta(BEz)
+  var pdf_sl = Beta({a:Bz.alpha,b:Bz.beta})
+  
+  // Project opinions to Beta pdfs and compute their product by MC simulation
+  var BEx = Opinion2BetaEvidence(Ox)
+  var Bx = BetaEvidence2Beta(BEx)
+  var BEy = Opinion2BetaEvidence(Oy)
+  var By = BetaEvidence2Beta(BEy)
+  var BxBy = MC_product(Bx,By)
+  var pdf_mc = kde(BxBy)
+  
+  var Y = logit_MC_product(Bx,By)
+  var pdf_logit = kde(Y)
+  
+  // Integration loop
+  var loop_integration = function(){
+    var x = sample(Uniform({a:0,b:1}))
+    var diff1 = Math.abs(( Math.exp(pdf_sl.score(x)) - Math.exp(pdf_mc.score(x)) ) )   
+    var diff2 = Math.abs(( Math.exp(pdf_sl.score(x)) - Math.exp( pdf_logit.score(logit(x)))/(x*(1-x)) ))
+    //print(diff1)
+    //print(diff2)
+    return diff2
+  }
+  
+  // Compute the integral distance
+  var iter_integrations = _.range(N_integrations)  
+  var difffernces = map(loop_integration, iter_integrations)
+  var mean_difffernces = listMean(difffernces)
+  
+  print('Simulation number '+i+' - Distance: '+mean_difffernces)
+  return mean_difffernces
+}
+
+// Compute the average and std deviation of integral distance
+var distances = map(loop_experiments,iter_experiments)
+var mean_distances = listMean(distances)
+var sd_distances = listStdev(distances)
+
+print('Overall Distance: ' + mean_distances + ' +- ' + sd_distances)

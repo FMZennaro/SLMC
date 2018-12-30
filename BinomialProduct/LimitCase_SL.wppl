@@ -1,0 +1,63 @@
+
+// SUBJECTIVE LOGIC and MCMC
+// Case study
+// Simulating and comparing SL approximation and the true distribution (run at http://webppl.org/)
+
+// Global parameters.
+var W = 2
+var alpha = Vector([1., 1., 1.])
+var N_mc = 10000
+var N_integrations = 1000
+
+// Helper function for converting from opinions to beta pdfs and viceversa
+var Opinion2BetaEvidence = function(opinion){
+  if (opinion.u==0){ return 'error' }
+  else{
+    var r = opinion.b*W / opinion.u
+    var s = opinion.d*W / opinion.u
+    return {r:r,s:s,a:opinion.a}
+  }
+}  
+
+var BetaEvidence2Beta = function(belief){
+  var alpha = belief.r + belief.a*W
+  var beta = belief.s + (1-belief.a)*W
+  return {alpha:alpha,beta:beta}
+}
+
+var SL_product = function(o1,o2){
+  var b = (o1.b * o2.b) +
+    ((1-o1.a)*o2.a*o1.b*o2.u + (1-o2.a)*o1.a*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var d = o1.d + o2.d - o1.d*o2.d
+  var u = o1.u*o2.u +
+    ((1-o2.a)*o1.b*o2.u + (1-o1.a)*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var a = o1.a*o2.a
+  return {b:b,d:d,u:u,a:a}
+}
+
+// Parameters for initializing the opinions
+var Ox = {b:0, d:0, u:1, a:.5}
+var Oy = {b:0, d:0, u:1, a:.5}
+
+// Compute the product of opinions and project to Beta pdf for visualization
+var Oz = SL_product(Ox,Oy)
+var BEz = Opinion2BetaEvidence(Oz)
+var Bz = BetaEvidence2Beta(BEz)
+var pdf_sl = Beta({a:Bz.alpha,b:Bz.beta})
+
+// Integration loop
+var loop_integration = function(){
+  var x = sample(Uniform({a:0,b:1}))
+  var diff = Math.abs(( -Math.log(x) - Math.exp(pdf_sl.score(x)) ))
+  return diff
+}
+
+// Compute the integral distance
+var iter_integrations = _.range(N_integrations)  
+var difffernces = map(loop_integration, iter_integrations)
+var mean_difffernces = listMean(difffernces)
+var sd_difffernces = listStdev(difffernces)
+  
+print('Overall Distance: ' + mean_difffernces + ' +- ' + sd_difffernces)

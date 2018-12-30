@@ -1,0 +1,114 @@
+
+// SUBJECTIVE LOGIC and MCMC - Quantitative Analysis
+// Simulating and comparing Beta approximation and MC simulation (run at http://webppl.org/)
+
+// Global parameters.
+var W = 2
+var alpha = Vector([1., 1., 1.])
+var N_experiments = 100
+var N_mc = 500
+var N_integrations = 1000
+
+var logit = function(x){
+  return Math.log( x / (1-x))
+}
+
+// Helper function for converting from opinions to beta pdfs and viceversa
+var Opinion2BetaEvidence = function(opinion){
+  if (opinion.u==0){ return 'error' }
+  else{
+    var r = opinion.b*W / opinion.u
+    var s = opinion.d*W / opinion.u
+    return {r:r,s:s,a:opinion.a}
+  }
+}  
+
+var BetaEvidence2Beta = function(belief){
+  var alpha = belief.r + belief.a*W
+  var beta = belief.s + (1-belief.a)*W
+  return {alpha:alpha,beta:beta}
+}
+
+// Functions to compute products
+var MC_product = function(b1,b2){
+  var options = {method:'rejection', samples:N_mc}
+  return Infer(options, function(){
+    var x1 = Beta({a:b1.alpha,b:b1.beta})
+    var x2 = Beta({a:b2.alpha,b:b2.beta})
+    return sample(x1)*sample(x2) 
+  })
+}
+
+var logit_MC_product = function(b1,b2){
+  var options = {method:'MCMC', samples:N_mc}
+  return Infer(options, function(){
+    var x1 = Beta({a:b1.alpha,b:b1.beta})
+    var x2 = Beta({a:b2.alpha,b:b2.beta})
+    var x1x2 = sample(x1)*sample(x2)
+    var y = logit(x1x2) 
+    return y
+  })
+}
+
+
+
+// Experimental loop
+var iter_experiments = _.range(N_experiments)
+var loop_experiments = function(i){
+
+  // Parameters for initializing the opinions
+  var vals1 = sample(Dirichlet({alpha:alpha})).data
+  var vals2 = sample(Dirichlet({alpha:alpha})).data
+  var a1 = sample(Uniform({a:0,b:1}))
+  var a2 = sample(Uniform({a:0,b:1}))
+
+  var Ox = {b:vals1[0], d:vals1[1], u:vals1[2], a:a1}
+  var Oy = {b:vals2[0], d:vals2[1], u:vals2[2], a:a2}
+
+  // Project opinions to Beta pdfs and compute their product by MC simulation
+  var BEx = Opinion2BetaEvidence(Ox)
+  var Bx = BetaEvidence2Beta(BEx)
+  var BEy = Opinion2BetaEvidence(Oy)
+  var By = BetaEvidence2Beta(BEy)
+  var BxBy = MC_product(Bx,By)
+  
+  // Compute pdf via KDE with logit trick
+  var Y = logit_MC_product(Bx,By)
+  var pdf_logit = kde(Y)
+  
+  // Compute the empirical moments of the product from the pdfs
+  var meanBx = Bx.alpha / (Bx.alpha + Bx.beta)
+  var meanBy = By.alpha / (By.alpha + By.beta)
+  var varBx = (Bx.alpha * Bx.beta) / ((Bx.alpha + Bx.beta)*(Bx.alpha + Bx.beta)*(Bx.alpha + Bx.beta+1))
+  var varBy = (By.alpha * By.beta) / ((By.alpha + By.beta)*(By.alpha + By.beta)*(By.alpha + By.beta+1))
+
+  var meanBz = meanBx * meanBy
+  var varBz = meanBx*meanBx*varBy + meanBy*meanBy*varBx + varBx*varBy
+  
+  // Instantiate an approximate Beta pdf
+  var B_alpha = -(meanBz * (varBz + meanBz*meanBz - meanBz)) / (varBz)
+  var B_beta = ((meanBz-1) * (varBz + meanBz*meanBz - meanBz)) / (varBz)
+  var pdf_beta = Beta({a:B_alpha,b:B_beta})
+    
+  // Integration loop
+  var loop_integration = function(){
+    var x = sample(Uniform({a:0,b:1}))
+    var diff = Math.abs(( Math.exp(pdf_beta.score(x)) - Math.exp( pdf_logit.score(logit(x))) / (x*(1-x)) ))
+    return diff
+  }
+  
+  // Compute the integral distance
+  var iter_integrations = _.range(N_integrations)  
+  var difffernces = map(loop_integration, iter_integrations)
+  var mean_difffernces = listMean(difffernces)
+  
+  print('Simulation number '+i+' - Distance: '+mean_difffernces)
+  return mean_difffernces
+}
+
+// Compute the average and std deviation of integral distance
+var distances = map(loop_experiments,iter_experiments)
+var mean_distances = listMean(distances)
+var sd_distances = listStdev(distances)
+
+print('Overall Distance: ' + mean_distances + ' +- ' + sd_distances)

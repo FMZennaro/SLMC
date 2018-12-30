@@ -1,0 +1,115 @@
+
+// SUBJECTIVE LOGIC and MCMC
+// Case study
+// Simulating and comparing: (i) SL product, (ii) MC simulation, (iii) Gaussian approximation, (iv) True pdf (run at http://webppl.org/)
+// Deprecated
+
+// Global parameters. Opinion conversion parameter W and number of MC iterations N
+var W = 2
+var N = 100000
+
+// Parameters for initializing the opinions
+var Ox = {b:0, d:0, u:1, a:.5}
+var Oy = {b:0, d:0, u:1, a:.5}
+
+// Helper function for converting from opinions to beta pdfs and viceversa
+var Opinion2BetaEvidence = function(opinion){
+  if (opinion.u==0){ return 'error' }
+  else{
+    var r = opinion.b*W / opinion.u
+    var s = opinion.d*W / opinion.u
+    return {r:r,s:s,a:opinion.a}
+  }
+}  
+  
+var BetaEvidence2Opinion = function(belief){
+  var b = belief.r / (W+belief.r+belief.s)
+  var d = belief.s / (W+belief.r+belief.s)
+  var u = W / (W+belief.r+belief.s)
+  return {b:b,d:d,u:u,a:belief.a}
+}
+
+var BetaEvidence2Beta = function(belief){
+  var alpha = belief.r + belief.a*W
+  var beta = belief.s + (1-belief.a)*W
+  return {alpha:alpha,beta:beta}
+}
+
+// Functions to compute products
+var SL_product = function(o1,o2){
+  var b = (o1.b * o2.b) +
+    ((1-o1.a)*o2.a*o1.b*o2.u + (1-o2.a)*o1.a*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var d = o1.d + o2.d - o1.d*o2.d
+  var u = o1.u*o2.u +
+    ((1-o2.a)*o1.b*o2.u + (1-o1.a)*o2.b*o1.u) /
+    (1 - o1.a*o2.a)
+  var a = o1.a*o2.a
+  return {b:b,d:d,u:u,a:a}
+}
+
+var MC_product = function(b1,b2){
+  var options = {method:'MCMC', samples:N}
+  return Infer(options, function(){
+    var x1 = Beta({a:b1.alpha,b:b1.beta})
+    var x2 = Beta({a:b2.alpha,b:b2.beta})
+    return sample(x1)*sample(x2) 
+  })
+}
+
+var minuslog = function(){
+  var options = {method:'MCMC', samples:N}
+  return Infer(options, function(){
+    var x = sample(Uniform({a:0,b:1}))
+    return -Math.log(x) 
+  })
+}
+
+// Print out the opinions used
+print('Ox is: ')
+print(Ox)
+print('Oy is: ')
+print(Oy)
+print('Number of samples: ')
+print(N)
+
+// Compute the product of opinions and project to Beta pdf for visualization
+var Oz = SL_product(Ox,Oy)
+var BEz = Opinion2BetaEvidence(Oz)
+var Bz = BetaEvidence2Beta(BEz)
+var pdf_sl = Beta({a:Bz.alpha,b:Bz.beta})
+
+// Project opinions to Beta pdfs and compute their product by MC simulation
+var BEx = Opinion2BetaEvidence(Ox)
+var Bx = BetaEvidence2Beta(BEx)
+var BEy = Opinion2BetaEvidence(Oy)
+var By = BetaEvidence2Beta(BEy)
+var pdf_mc = MC_product(Bx,By)
+
+// Compute the empirical moments of the product from the MC simulation
+var MC_mean = expectation(pdf_mc)
+var MC_mom2 = expectation(pdf_mc, function(x){return x*x})
+var MC_var = MC_mom2 - (MC_mean*MC_mean)
+
+// Instantiate an approximate Beta pdf
+var B_alpha = -(MC_mean * (MC_var + MC_mean*MC_mean - MC_mean)) / (MC_var)
+var B_beta = ((MC_mean-1) * (MC_var + MC_mean*MC_mean - MC_mean)) / (MC_var)
+var pdf_beta = Beta({a:B_alpha,b:B_beta})
+
+// Evaluate the true pdf
+var pdf_true = minuslog()
+
+// Plot SL and MC products on a single plot
+viz.auto(MH(function() {
+  var method = uniformDraw(['True','SL','MC','Beta']);
+  return {
+    method: method,
+    values: method == 'SL' ? sample(pdf_sl) : 
+            method == 'MC' ? sample(pdf_mc) :
+            method == 'True' ? -Math.log( sample(Uniform({a:0,b:1})) ) :
+            sample(pdf_beta)
+  }
+}, N*4));
+
+
+
